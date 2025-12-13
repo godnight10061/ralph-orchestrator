@@ -8,7 +8,6 @@ This module provides security hardening functions including input validation,
 path sanitization, and sensitive data protection.
 """
 
-import os
 import re
 import logging
 from pathlib import Path
@@ -177,7 +176,7 @@ class SecurityValidator:
                 # Relative path that goes outside base directory
                 raise ValueError(
                     f"Path traversal detected: {path} -> {resolved_path}"
-                )
+                ) from None
 
         return resolved_path
 

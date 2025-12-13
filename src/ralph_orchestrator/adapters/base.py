@@ -5,7 +5,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 from pathlib import Path
 import asyncio
 
@@ -81,10 +81,10 @@ class ToolAdapter(ABC):
                 output="",
                 error=f"Prompt file {prompt_file} not found"
             )
-        
-        with open(prompt_file, 'r') as f:
-            prompt = f.read()
-        
+
+        # Use asyncio.to_thread to avoid blocking the event loop with file I/O
+        prompt = await asyncio.to_thread(prompt_file.read_text, encoding='utf-8')
+
         return await self.aexecute(prompt, **kwargs)
     
     def estimate_cost(self, prompt: str) -> float:
