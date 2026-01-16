@@ -330,6 +330,7 @@ jobs:
     # Only publish on actual releases (not PRs) and after GitHub release succeeds
     if: ${{ needs.plan.outputs.publishing == 'true' && needs.host.result == 'success' }}
     runs-on: "ubuntu-22.04"
+    environment: npm  # Required for OIDC trusted publishing
     permissions:
       contents: read
       id-token: write  # Required for npm OIDC trusted publishing
