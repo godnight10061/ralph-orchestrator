@@ -241,6 +241,8 @@ This runs Ralph in a loop. No hats, no events, no role switching. Ralph iterates
 
 ### Hat-Based Mode (Specialized Personas)
 
+> Ralph can wear many hats.
+
 Add a `hats` section to enable role-based orchestration. Hats subscribe to events (triggers) and publish events when done:
 
 ```yaml
