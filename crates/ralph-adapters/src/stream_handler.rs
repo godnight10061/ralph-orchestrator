@@ -338,8 +338,6 @@ pub struct TuiStreamHandler {
     /// Lines that are not markdown (tool calls, errors, etc.)
     /// These are appended after markdown lines on each re-parse
     non_markdown_lines: Vec<Line<'static>>,
-    /// Maximum line length before truncation
-    max_line_length: usize,
 }
 
 impl TuiStreamHandler {
@@ -353,7 +351,6 @@ impl TuiStreamHandler {
             verbose,
             lines: Arc::new(Mutex::new(Vec::new())),
             non_markdown_lines: Vec::new(),
-            max_line_length: 200,
         }
     }
 
@@ -366,7 +363,6 @@ impl TuiStreamHandler {
             verbose,
             lines,
             non_markdown_lines: Vec::new(),
-            max_line_length: 200,
         }
     }
 
@@ -387,30 +383,8 @@ impl TuiStreamHandler {
     fn update_lines(&mut self) {
         let mut all_lines = text_to_lines(&self.markdown_buffer);
 
-        // Truncate long lines
-        for line in &mut all_lines {
-            let total_len: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-            if total_len > self.max_line_length {
-                // Truncate the line content
-                let mut remaining = self.max_line_length;
-                let mut new_spans = Vec::new();
-                for span in line.spans.drain(..) {
-                    let char_count = span.content.chars().count();
-                    if remaining == 0 {
-                        break;
-                    } else if char_count <= remaining {
-                        remaining -= char_count;
-                        new_spans.push(span);
-                    } else {
-                        // Truncate this span
-                        let truncated: String = span.content.chars().take(remaining).collect();
-                        new_spans.push(Span::styled(truncated + "...", span.style));
-                        break;
-                    }
-                }
-                line.spans = new_spans;
-            }
-        }
+        // Note: Long lines are NOT truncated here. The TUI's ContentPane widget
+        // handles soft-wrapping at viewport boundaries, preserving full content.
 
         // Append non-markdown lines (tool calls, errors, etc.)
         all_lines.extend(self.non_markdown_lines.clone());
@@ -838,29 +812,30 @@ mod tests {
         }
 
         #[test]
-        fn text_truncation_utf8_safe() {
-            // Given TuiStreamHandler with max_line_length configured
+        fn long_lines_preserved_without_truncation() {
+            // Given TuiStreamHandler
             let mut handler = TuiStreamHandler::new(false);
 
             // When on_text() receives a very long string (500+ chars)
             let long_string: String = "a".repeat(500) + "\n";
             handler.on_text(&long_string);
 
-            // Then line is truncated and ends with "..." and is UTF-8 safe
+            // Then line is preserved fully (ContentPane handles wrapping)
             let lines = collect_lines(&handler);
             assert_eq!(lines.len(), 2, "trailing newline creates an empty line");
             let line_text = lines[0].to_string();
 
-            // Should be truncated (default 200 chars for display)
-            assert!(
-                line_text.len() < 500,
-                "Line should be truncated: len={}",
+            // Line should NOT be truncated - full content preserved
+            assert_eq!(
+                line_text.len(),
+                500,
+                "Line should preserve full content: len={}",
                 line_text.len()
             );
             assert!(
-                line_text.ends_with("..."),
-                "Truncated line should end with ...: {}",
-                line_text
+                !line_text.ends_with("..."),
+                "Line should not have ellipsis truncation: {}",
+                &line_text[line_text.len().saturating_sub(10)..]
             );
         }
 
