@@ -184,6 +184,21 @@ mod tests {
         assert!(preset.content.contains("confession.issues_found"));
         assert!(preset.content.contains("confession.clean"));
         assert!(preset.content.contains("Confidence (0-100)"));
+        assert!(
+            preset
+                .content
+                .contains("If you were triggered by `confession.issues_found`:")
+        );
+        assert!(
+            preset
+                .content
+                .contains("Do not output the completion promise on this path.")
+        );
+        assert!(
+            preset
+                .content
+                .contains("If you were triggered by `confession.clean`:")
+        );
     }
 
     #[test]
