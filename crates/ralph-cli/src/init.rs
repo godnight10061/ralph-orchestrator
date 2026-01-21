@@ -202,6 +202,10 @@ pub fn format_preset_list() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::TempDir;
+
+    static CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn test_generate_template_claude() {
@@ -243,9 +247,6 @@ mod tests {
 
     #[test]
     fn test_init_from_preset_confession_loop_writes_config() {
-        use std::sync::{Mutex, OnceLock};
-        use tempfile::TempDir;
-
         struct RestoreDir(std::path::PathBuf);
         impl Drop for RestoreDir {
             fn drop(&mut self) {
@@ -253,7 +254,6 @@ mod tests {
             }
         }
 
-        static CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let _guard = CWD_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()

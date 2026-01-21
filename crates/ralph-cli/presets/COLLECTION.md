@@ -784,7 +784,6 @@ hats:
       If successful: LOOP_COMPLETE
 ```
 
-## Quick Reference: When to Use Each Preset
 ---
 
 ## 13. `confession-loop.yml` - Confidence-Gated Completion
