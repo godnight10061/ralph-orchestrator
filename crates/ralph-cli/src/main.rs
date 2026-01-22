@@ -185,6 +185,35 @@ mod colors {
     pub const MAGENTA: &str = "\x1b[35m";
 }
 
+/// Source for configuration: file path, builtin preset, or remote URL.
+#[derive(Debug, Clone)]
+pub enum ConfigSource {
+    /// Local file path (default behavior)
+    File(PathBuf),
+    /// Builtin preset name (e.g., "builtin:tdd-red-green")
+    Builtin(String),
+    /// Remote URL (e.g., "http://example.com/preset.yml")
+    Remote(String),
+}
+
+impl ConfigSource {
+    /// Parse a config source string into its variant.
+    ///
+    /// Format:
+    /// - `builtin:preset-name` → Builtin preset
+    /// - `http://...` or `https://...` → Remote URL
+    /// - Anything else → File path
+    fn parse(s: &str) -> Self {
+        if let Some(name) = s.strip_prefix("builtin:") {
+            ConfigSource::Builtin(name.to_string())
+        } else if s.starts_with("http://") || s.starts_with("https://") {
+            ConfigSource::Remote(s.to_string())
+        } else {
+            ConfigSource::File(PathBuf::from(s))
+        }
+    }
+}
+
 /// Ralph Orchestrator - Multi-agent orchestration framework
 #[derive(Parser, Debug)]
 #[command(name = "ralph", version, about)]
@@ -271,6 +300,10 @@ struct RunArgs {
     /// Inline prompt text (mutually exclusive with -P/--prompt-file)
     #[arg(short = 'p', long = "prompt", conflicts_with = "prompt_file")]
     prompt_text: Option<String>,
+
+    /// Override backend from config (cli > config > auto-detect)
+    #[arg(short = 'b', long = "backend", value_name = "BACKEND")]
+    backend: Option<String>,
 
     /// Prompt file path (mutually exclusive with -p/--prompt)
     #[arg(short = 'P', long = "prompt-file", conflicts_with = "prompt_text")]
@@ -576,6 +609,7 @@ async fn main() -> Result<()> {
             let args = RunArgs {
                 prompt_text: None,
                 prompt_file: None,
+                backend: None,
                 max_iterations: None,
                 completion_promise: None,
                 dry_run: false,
@@ -598,13 +632,54 @@ async fn run_command(
     color_mode: ColorMode,
     args: RunArgs,
 ) -> Result<()> {
-    // Load configuration
-    let mut config = if config_path.exists() {
-        RalphConfig::from_file(&config_path)
-            .with_context(|| format!("Failed to load config from {:?}", config_path))?
-    } else {
-        warn!("Config file {:?} not found, using defaults", config_path);
-        RalphConfig::default()
+    // Parse config source (file, builtin, or remote)
+    let config_source = ConfigSource::parse(config_path.to_string_lossy().as_ref());
+
+    // Load configuration based on source type
+    let mut config = match config_source {
+        ConfigSource::File(path) => {
+            if path.exists() {
+                RalphConfig::from_file(&path)
+                    .with_context(|| format!("Failed to load config from {:?}", path))?
+            } else {
+                warn!("Config file {:?} not found, using defaults", path);
+                RalphConfig::default()
+            }
+        }
+        ConfigSource::Builtin(name) => {
+            let preset = presets::get_preset(&name).ok_or_else(|| {
+                let available = presets::preset_names().join(", ");
+                anyhow::anyhow!(
+                    "Unknown preset '{}'. Run `ralph run --list-presets` to see available presets.\n\nAvailable: {}",
+                    name,
+                    available
+                )
+            })?;
+            RalphConfig::parse_yaml(preset.content)
+                .with_context(|| format!("Failed to parse builtin preset '{}'", name))?
+        }
+        ConfigSource::Remote(url) => {
+            info!("Fetching config from {}", url);
+            let response = reqwest::get(&url)
+                .await
+                .with_context(|| format!("Failed to fetch config from {}", url))?;
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Failed to fetch config from {}: HTTP {}",
+                    url,
+                    response.status()
+                );
+            }
+
+            let content = response
+                .text()
+                .await
+                .with_context(|| format!("Failed to read config content from {}", url))?;
+
+            RalphConfig::parse_yaml(&content)
+                .with_context(|| format!("Failed to parse config from {}", url))?
+        }
     };
 
     // Normalize v1 flat fields into v2 nested structure
@@ -663,6 +738,11 @@ async fn run_command(
     // Override idle timeout if specified
     if let Some(timeout) = args.idle_timeout {
         config.cli.idle_timeout_secs = timeout;
+    }
+
+    // Apply backend override from CLI (takes precedence over config)
+    if let Some(backend) = args.backend {
+        config.cli.backend = backend;
     }
 
     // Validate configuration and emit warnings

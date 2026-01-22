@@ -224,7 +224,12 @@ impl RalphConfig {
         let path_ref = path.as_ref();
         debug!(path = %path_ref.display(), "Loading configuration from file");
         let content = std::fs::read_to_string(path_ref)?;
-        let config: Self = serde_yaml::from_str(&content)?;
+        Self::parse_yaml(&content)
+    }
+
+    /// Parses configuration from a YAML string.
+    pub fn parse_yaml(content: &str) -> Result<Self, ConfigError> {
+        let config: Self = serde_yaml::from_str(content)?;
         debug!(
             backend = %config.cli.backend,
             has_v1_fields = config.agent.is_some(),
