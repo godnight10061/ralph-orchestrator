@@ -1310,10 +1310,10 @@ impl EventLoop {
         for dir in search_dirs {
             for entry in std::fs::read_dir(&dir)? {
                 let entry = entry?;
-                let path = entry.path();
-                if !path.is_file() {
+                if !entry.file_type()?.is_file() {
                     continue;
                 }
+                let path = entry.path();
 
                 if path
                     .file_name()
