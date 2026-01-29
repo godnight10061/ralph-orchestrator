@@ -413,6 +413,13 @@ completed: null
 }
 
 #[test]
+fn test_extract_frontmatter_yaml_allows_whitespace_delimiters() {
+    let content = "--- \nstatus: completed\n--- \n# Task\n";
+    let yaml = extract_frontmatter_yaml(content).expect("Should extract YAML frontmatter");
+    assert_eq!(yaml, "status: completed");
+}
+
+#[test]
 fn test_completion_promise_allows_with_inline_prompt_even_with_pending_code_tasks() {
     use std::fs;
     use tempfile::TempDir;

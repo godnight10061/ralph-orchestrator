@@ -134,15 +134,14 @@ struct CodeTaskFrontmatter {
 
 fn extract_frontmatter_yaml(content: &str) -> Option<String> {
     let mut lines = content.lines();
-    let first = lines.next()?.trim_end();
+    let first = lines.next()?.trim();
     if first != "---" {
         return None;
     }
 
     let mut yaml_lines = Vec::new();
     for line in lines {
-        let line = line.trim_end();
-        if line == "---" {
+        if line.trim() == "---" {
             return Some(yaml_lines.join("\n"));
         }
         yaml_lines.push(line);
