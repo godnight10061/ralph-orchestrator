@@ -267,6 +267,152 @@ fn test_completion_promise_with_pending_tasks_in_task_store() {
 }
 
 #[test]
+fn test_completion_promise_rejected_when_code_tasks_pending() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let prompt_dir = temp_dir.path().join("tasks").join("web-ui");
+    fs::create_dir_all(&prompt_dir).unwrap();
+
+    let prompt_path = prompt_dir.join("PROMPT.md");
+    fs::write(&prompt_path, "# Prompt\n").unwrap();
+
+    let pending_task = prompt_dir.join("task-01.code-task.md");
+    fs::write(
+        &pending_task,
+        r"---
+status: pending
+created: 2026-01-01
+started: null
+completed: null
+---
+# Task 01
+",
+    )
+    .unwrap();
+
+    let completed_task = prompt_dir.join("task-02.code-task.md");
+    fs::write(
+        &completed_task,
+        r"---
+status: completed
+created: 2026-01-01
+started: 2026-01-01
+completed: 2026-01-01
+---
+# Task 02
+",
+    )
+    .unwrap();
+
+    let mut config = RalphConfig::default();
+    config.event_loop.prompt_file = prompt_path.to_string_lossy().to_string();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("ralph");
+
+    // Repro for issue #123: completion promise should not be accepted while scoped code tasks remain pending.
+    let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
+    assert_eq!(
+        reason, None,
+        "Should not terminate when code-task files in the prompt directory are still pending"
+    );
+}
+
+#[test]
+fn test_completion_promise_allows_when_code_tasks_completed() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let prompt_dir = temp_dir.path().join("tasks").join("web-ui");
+    fs::create_dir_all(&prompt_dir).unwrap();
+
+    let prompt_path = prompt_dir.join("PROMPT.md");
+    fs::write(&prompt_path, "# Prompt\n").unwrap();
+
+    let completed_task = prompt_dir.join("task-01.code-task.md");
+    fs::write(
+        &completed_task,
+        r"---
+status: completed
+created: 2026-01-01
+started: 2026-01-01
+completed: 2026-01-01
+---
+# Task 01
+",
+    )
+    .unwrap();
+
+    let mut config = RalphConfig::default();
+    config.event_loop.prompt_file = prompt_path.to_string_lossy().to_string();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("ralph");
+
+    let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
+    assert_eq!(
+        reason,
+        Some(TerminationReason::CompletionPromise),
+        "Should terminate when all code-task files in the prompt directory are completed"
+    );
+}
+
+#[test]
+fn test_completion_promise_ignores_unrelated_code_task_dirs() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Prompt directory has no code-task files.
+    let prompt_dir = temp_dir.path().join("tasks").join("web-ui");
+    fs::create_dir_all(&prompt_dir).unwrap();
+    let prompt_path = prompt_dir.join("PROMPT.md");
+    fs::write(&prompt_path, "# Prompt\n").unwrap();
+
+    // Unrelated phase directory contains pending tasks, but should not affect completion.
+    let unrelated_dir = temp_dir.path().join("tasks").join("enhancement");
+    fs::create_dir_all(&unrelated_dir).unwrap();
+    fs::write(
+        unrelated_dir.join("task-01.code-task.md"),
+        r"---
+status: pending
+created: 2026-01-01
+started: null
+completed: null
+---
+# Unrelated task
+",
+    )
+    .unwrap();
+
+    let mut config = RalphConfig::default();
+    config.event_loop.prompt_file = prompt_path.to_string_lossy().to_string();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("ralph");
+
+    let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
+    assert_eq!(
+        reason,
+        Some(TerminationReason::CompletionPromise),
+        "Unrelated pending code tasks outside the prompt directory should not block completion"
+    );
+}
+
+#[test]
 fn test_builder_cannot_terminate_loop() {
     // Per spec: "Builder hat outputs LOOP_COMPLETE → completion promise is ignored (only Ralph can terminate)"
     let config = RalphConfig::default();

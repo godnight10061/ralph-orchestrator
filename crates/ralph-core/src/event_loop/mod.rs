@@ -1115,6 +1115,27 @@ impl EventLoop {
         if hat_id.as_str() == "ralph"
             && EventParser::contains_promise(output, &self.config.event_loop.completion_promise)
         {
+            // Backpressure for code-task workflows: do not allow LOOP_COMPLETE while scoped
+            // code task files remain pending.
+            match self.pending_code_task_files() {
+                Ok(pending) if !pending.is_empty() => {
+                    let pending: Vec<_> = pending.iter().map(|p| p.display().to_string()).collect();
+                    warn!(
+                        pending_tasks = ?pending,
+                        "LOOP_COMPLETE with pending code task(s) - refusing completion"
+                    );
+                    return None;
+                }
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Failed to verify code task completion - refusing completion"
+                    );
+                    return None;
+                }
+                Ok(_) => {}
+            }
+
             // Log warning if tasks remain open (informational only)
             if self.config.memories.enabled {
                 if let Ok(false) = self.verify_tasks_complete() {
@@ -1205,6 +1226,96 @@ impl EventLoop {
 
         let store = TaskStore::load(&tasks_path)?;
         Ok(!store.has_pending_tasks())
+    }
+
+    /// Returns the list of pending code task files in the current prompt directory scope.
+    ///
+    /// Scope is intentionally narrow to avoid "tasks/ pollution" across phases:
+    /// - Directory containing the active prompt file
+    /// - Optional `{prompt_dir}/tasks/` subdirectory
+    ///
+    /// If no code task files are found, returns an empty list.
+    fn pending_code_task_files(&self) -> Result<Vec<PathBuf>, std::io::Error> {
+        use serde::Deserialize;
+
+        let prompt_file = self.config.event_loop.prompt_file.trim();
+        if prompt_file.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let prompt_path = self.config.core.resolve_path(prompt_file);
+        let prompt_dir = prompt_path
+            .parent()
+            .unwrap_or(&self.config.core.workspace_root);
+
+        let mut search_dirs = vec![prompt_dir.to_path_buf()];
+        let tasks_subdir = prompt_dir.join("tasks");
+        if tasks_subdir.is_dir() {
+            search_dirs.push(tasks_subdir);
+        }
+
+        let mut task_files = Vec::new();
+        for dir in search_dirs {
+            if !dir.is_dir() {
+                continue;
+            }
+
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+
+                if path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
+                {
+                    task_files.push(path);
+                }
+            }
+        }
+
+        task_files.sort();
+        task_files.dedup();
+
+        #[derive(Debug, Deserialize)]
+        struct Frontmatter {
+            status: Option<String>,
+        }
+
+        fn extract_frontmatter_yaml(content: &str) -> Option<String> {
+            let mut lines = content.lines();
+            let first = lines.next()?.trim_end();
+            if first != "---" {
+                return None;
+            }
+
+            let mut yaml_lines = Vec::new();
+            for line in lines {
+                let line = line.trim_end();
+                if line == "---" {
+                    return Some(yaml_lines.join("\n"));
+                }
+                yaml_lines.push(line);
+            }
+
+            None
+        }
+
+        let mut pending = Vec::new();
+        for task_path in task_files {
+            let content = std::fs::read_to_string(&task_path)?;
+            let status = extract_frontmatter_yaml(&content)
+                .and_then(|yaml| serde_yaml::from_str::<Frontmatter>(&yaml).ok())
+                .and_then(|fm| fm.status);
+
+            if status.as_deref() != Some("completed") {
+                pending.push(task_path);
+            }
+        }
+
+        Ok(pending)
     }
 
     /// Returns a list of open task descriptions for logging purposes.
