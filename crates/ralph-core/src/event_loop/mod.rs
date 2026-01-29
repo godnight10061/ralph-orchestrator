@@ -1315,11 +1315,11 @@ impl EventLoop {
                 }
                 let path = entry.path();
 
-                if path
+                let is_code_task_file = path
                     .file_name()
-                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
-                    && is_code_task_file_pending(&path)?
-                {
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"));
+
+                if is_code_task_file && is_code_task_file_pending(&path)? {
                     pending_tasks.insert(path);
                 }
             }
