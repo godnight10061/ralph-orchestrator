@@ -1303,7 +1303,17 @@ impl EventLoop {
                 {
                     let content = std::fs::read_to_string(&path)?;
                     let status = extract_frontmatter_yaml(&content)
-                        .and_then(|yaml| serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml).ok())
+                        .and_then(|yaml| {
+                            serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml)
+                                .map_err(|err| {
+                                    warn!(
+                                        path = %path.display(),
+                                        error = %err,
+                                        "Failed to parse code task frontmatter, treating as pending"
+                                    );
+                                })
+                                .ok()
+                        })
                         .and_then(|fm| fm.status);
 
                     if status.as_deref() != Some("completed") {
