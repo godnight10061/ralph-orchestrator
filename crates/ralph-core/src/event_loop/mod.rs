@@ -1321,15 +1321,16 @@ impl EventLoop {
                 }
 
                 let is_pending = match entry.file_type() {
-                    Ok(file_type) if file_type.is_file() => is_code_task_file_pending(&path)
-                        .unwrap_or_else(|err| {
+                    Ok(file_type) if file_type.is_file() || file_type.is_symlink() => {
+                        is_code_task_file_pending(&path).unwrap_or_else(|err| {
                             warn!(
                                 path = %path.display(),
                                 error = %err,
                                 "Failed to check code task status, treating as pending"
                             );
                             true
-                        }),
+                        })
+                    }
                     Ok(_) => false,
                     Err(err) => {
                         warn!(
