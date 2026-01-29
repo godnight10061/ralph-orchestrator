@@ -1337,19 +1337,19 @@ impl EventLoop {
                     continue;
                 }
 
-                match is_code_task_file_pending(&path) {
-                    Ok(true) => {
-                        pending_tasks.insert(path);
-                    }
-                    Ok(false) => {}
+                let is_pending = match is_code_task_file_pending(&path) {
+                    Ok(pending) => pending,
                     Err(err) => {
                         warn!(
                             path = %path.display(),
                             error = %err,
                             "Failed to check code task status, treating as pending"
                         );
-                        pending_tasks.insert(path);
+                        true
                     }
+                };
+                if is_pending {
+                    pending_tasks.insert(path);
                 }
             }
         }
