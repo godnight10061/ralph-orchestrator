@@ -1319,10 +1319,9 @@ impl EventLoop {
                 if path
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
+                    && is_code_task_file_pending(&path)?
                 {
-                    if is_code_task_file_pending(&path)? {
-                        pending_tasks.insert(path);
-                    }
+                    pending_tasks.insert(path);
                 }
             }
         }
