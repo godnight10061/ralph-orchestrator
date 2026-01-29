@@ -18,6 +18,7 @@ use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -124,6 +125,30 @@ pub struct EventLoop {
     loop_context: Option<LoopContext>,
     /// Skill registry for the current loop.
     skill_registry: SkillRegistry,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodeTaskFrontmatter {
+    status: Option<String>,
+}
+
+fn extract_frontmatter_yaml(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    let first = lines.next()?.trim_end();
+    if first != "---" {
+        return None;
+    }
+
+    let mut yaml_lines = Vec::new();
+    for line in lines {
+        let line = line.trim_end();
+        if line == "---" {
+            return Some(yaml_lines.join("\n"));
+        }
+        yaml_lines.push(line);
+    }
+
+    None
 }
 
 impl EventLoop {
@@ -1117,15 +1142,8 @@ impl EventLoop {
         {
             // Backpressure for code-task workflows: do not allow LOOP_COMPLETE while scoped
             // code task files remain pending.
-            match self.pending_code_task_files() {
-                Ok(pending) if !pending.is_empty() => {
-                    let pending: Vec<_> = pending.iter().map(|p| p.display().to_string()).collect();
-                    warn!(
-                        pending_tasks = ?pending,
-                        "LOOP_COMPLETE with pending code task(s) - refusing completion"
-                    );
-                    return None;
-                }
+            let pending_tasks = match self.pending_code_task_files() {
+                Ok(tasks) => tasks,
                 Err(err) => {
                     warn!(
                         error = %err,
@@ -1133,7 +1151,18 @@ impl EventLoop {
                     );
                     return None;
                 }
-                Ok(_) => {}
+            };
+
+            if !pending_tasks.is_empty() {
+                let pending: Vec<_> = pending_tasks
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
+                warn!(
+                    pending_tasks = ?pending,
+                    "LOOP_COMPLETE with pending code task(s) - refusing completion"
+                );
+                return None;
             }
 
             // Log warning if tasks remain open (informational only)
@@ -1236,8 +1265,6 @@ impl EventLoop {
     ///
     /// If no code task files are found, returns an empty list.
     fn pending_code_task_files(&self) -> Result<Vec<PathBuf>, std::io::Error> {
-        use serde::Deserialize;
-
         // Only enforce code-task backpressure when running from a prompt file (i.e., `ralph run -P ...`).
         // If the user provided an inline prompt, the configured `prompt_file` may still be the default value
         // and should not be used for filesystem-based completion gating.
@@ -1286,35 +1313,11 @@ impl EventLoop {
         task_files.sort();
         task_files.dedup();
 
-        #[derive(Debug, Deserialize)]
-        struct Frontmatter {
-            status: Option<String>,
-        }
-
-        fn extract_frontmatter_yaml(content: &str) -> Option<String> {
-            let mut lines = content.lines();
-            let first = lines.next()?.trim_end();
-            if first != "---" {
-                return None;
-            }
-
-            let mut yaml_lines = Vec::new();
-            for line in lines {
-                let line = line.trim_end();
-                if line == "---" {
-                    return Some(yaml_lines.join("\n"));
-                }
-                yaml_lines.push(line);
-            }
-
-            None
-        }
-
         let mut pending = Vec::new();
         for task_path in task_files {
             let content = std::fs::read_to_string(&task_path)?;
             let status = extract_frontmatter_yaml(&content)
-                .and_then(|yaml| serde_yaml::from_str::<Frontmatter>(&yaml).ok())
+                .and_then(|yaml| serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml).ok())
                 .and_then(|fm| fm.status);
 
             if status.as_deref() != Some("completed") {
