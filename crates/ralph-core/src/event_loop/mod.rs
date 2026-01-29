@@ -1310,17 +1310,46 @@ impl EventLoop {
         for dir in search_dirs {
             for entry in std::fs::read_dir(&dir)? {
                 let entry = entry?;
-                if !entry.file_type()?.is_file() {
+                let path = entry.path();
+
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(err) => {
+                        warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to read file type while scanning code tasks, treating as pending"
+                        );
+                        pending_tasks.insert(path);
+                        continue;
+                    }
+                };
+
+                if !file_type.is_file() {
                     continue;
                 }
-                let path = entry.path();
 
                 let is_code_task_file = path
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"));
 
-                if is_code_task_file && is_code_task_file_pending(&path)? {
-                    pending_tasks.insert(path);
+                if !is_code_task_file {
+                    continue;
+                }
+
+                match is_code_task_file_pending(&path) {
+                    Ok(true) => {
+                        pending_tasks.insert(path);
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to check code task status, treating as pending"
+                        );
+                        pending_tasks.insert(path);
+                    }
                 }
             }
         }
