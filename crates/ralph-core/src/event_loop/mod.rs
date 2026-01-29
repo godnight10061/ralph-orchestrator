@@ -1312,13 +1312,21 @@ impl EventLoop {
                 let entry = entry?;
                 let path = entry.path();
 
+                let is_code_task_file = path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"));
+
+                if !is_code_task_file {
+                    continue;
+                }
+
                 let file_type = match entry.file_type() {
                     Ok(file_type) => file_type,
                     Err(err) => {
                         warn!(
                             path = %path.display(),
                             error = %err,
-                            "Failed to read file type while scanning code tasks, treating as pending"
+                            "Failed to read file type for code task, treating as pending"
                         );
                         pending_tasks.insert(path);
                         continue;
@@ -1326,14 +1334,6 @@ impl EventLoop {
                 };
 
                 if !file_type.is_file() {
-                    continue;
-                }
-
-                let is_code_task_file = path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"));
-
-                if !is_code_task_file {
                     continue;
                 }
 
