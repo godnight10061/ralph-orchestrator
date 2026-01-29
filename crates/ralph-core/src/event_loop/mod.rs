@@ -19,7 +19,7 @@ use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, trun
 use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -149,6 +149,25 @@ fn extract_frontmatter_yaml(content: &str) -> Option<String> {
     }
 
     None
+}
+
+fn is_code_task_file_pending(path: &Path) -> Result<bool, std::io::Error> {
+    let content = std::fs::read_to_string(path)?;
+    let status = extract_frontmatter_yaml(&content).and_then(|yaml| {
+        match serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml) {
+            Ok(fm) => fm.status,
+            Err(err) => {
+                warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "Failed to parse code task frontmatter, treating as pending"
+                );
+                None
+            }
+        }
+    });
+
+    Ok(status.as_deref() != Some("completed"))
 }
 
 impl EventLoop {
@@ -1301,22 +1320,7 @@ impl EventLoop {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
                 {
-                    let content = std::fs::read_to_string(&path)?;
-                    let status = extract_frontmatter_yaml(&content).and_then(|yaml| {
-                        match serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml) {
-                            Ok(fm) => fm.status,
-                            Err(err) => {
-                                warn!(
-                                    path = %path.display(),
-                                    error = %err,
-                                    "Failed to parse code task frontmatter, treating as pending"
-                                );
-                                None
-                            }
-                        }
-                    });
-
-                    if status.as_deref() != Some("completed") {
+                    if is_code_task_file_pending(&path)? {
                         pending_tasks.insert(path);
                     }
                 }
