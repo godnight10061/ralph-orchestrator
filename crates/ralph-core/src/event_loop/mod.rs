@@ -152,7 +152,7 @@ fn extract_frontmatter_yaml(content: &str) -> Option<String> {
 
 fn is_code_task_file_pending(path: &Path) -> Result<bool, std::io::Error> {
     let content = std::fs::read_to_string(path)?;
-    let status = extract_frontmatter_yaml(&content).and_then(|yaml| {
+    let status = if let Some(yaml) = extract_frontmatter_yaml(&content) {
         match serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml) {
             Ok(fm) => fm.status,
             Err(err) => {
@@ -164,7 +164,9 @@ fn is_code_task_file_pending(path: &Path) -> Result<bool, std::io::Error> {
                 None
             }
         }
-    });
+    } else {
+        None
+    };
 
     Ok(status.as_deref() != Some("completed"))
 }
