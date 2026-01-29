@@ -1290,10 +1290,6 @@ impl EventLoop {
 
         let mut task_files = Vec::new();
         for dir in search_dirs {
-            if !dir.is_dir() {
-                continue;
-            }
-
             for entry in std::fs::read_dir(&dir)? {
                 let entry = entry?;
                 let path = entry.path();
