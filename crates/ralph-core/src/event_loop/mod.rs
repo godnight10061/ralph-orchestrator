@@ -1238,6 +1238,13 @@ impl EventLoop {
     fn pending_code_task_files(&self) -> Result<Vec<PathBuf>, std::io::Error> {
         use serde::Deserialize;
 
+        // Only enforce code-task backpressure when running from a prompt file (i.e., `ralph run -P ...`).
+        // If the user provided an inline prompt, the configured `prompt_file` may still be the default value
+        // and should not be used for filesystem-based completion gating.
+        if self.config.event_loop.prompt.is_some() {
+            return Ok(Vec::new());
+        }
+
         let prompt_file = self.config.event_loop.prompt_file.trim();
         if prompt_file.is_empty() {
             return Ok(Vec::new());

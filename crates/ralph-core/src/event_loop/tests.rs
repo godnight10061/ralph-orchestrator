@@ -413,6 +413,43 @@ completed: null
 }
 
 #[test]
+fn test_completion_promise_allows_with_inline_prompt_even_with_pending_code_tasks() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let tasks_dir = temp_dir.path().join("tasks");
+    fs::create_dir_all(&tasks_dir).unwrap();
+
+    // If completion gating is incorrectly keyed off the default prompt_file, this pending task would block.
+    fs::write(
+        tasks_dir.join("task-01.code-task.md"),
+        r"---
+status: pending
+---
+# Pending task
+",
+    )
+    .unwrap();
+
+    let mut config = RalphConfig::default();
+    config.event_loop.prompt = Some("Inline prompt workflow".to_string());
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("ralph");
+
+    let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
+    assert_eq!(
+        reason,
+        Some(TerminationReason::CompletionPromise),
+        "Inline prompt runs should not be gated by code-task file status"
+    );
+}
+
+#[test]
 fn test_builder_cannot_terminate_loop() {
     // Per spec: "Builder hat outputs LOOP_COMPLETE → completion promise is ignored (only Ralph can terminate)"
     let config = RalphConfig::default();
