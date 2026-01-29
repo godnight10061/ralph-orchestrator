@@ -1302,19 +1302,19 @@ impl EventLoop {
                     .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
                 {
                     let content = std::fs::read_to_string(&path)?;
-                    let status = extract_frontmatter_yaml(&content)
-                        .and_then(|yaml| {
-                            serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml)
-                                .map_err(|err| {
-                                    warn!(
-                                        path = %path.display(),
-                                        error = %err,
-                                        "Failed to parse code task frontmatter, treating as pending"
-                                    );
-                                })
-                                .ok()
-                        })
-                        .and_then(|fm| fm.status);
+                    let status = extract_frontmatter_yaml(&content).and_then(|yaml| {
+                        match serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml) {
+                            Ok(fm) => fm.status,
+                            Err(err) => {
+                                warn!(
+                                    path = %path.display(),
+                                    error = %err,
+                                    "Failed to parse code task frontmatter, treating as pending"
+                                );
+                                None
+                            }
+                        }
+                    });
 
                     if status.as_deref() != Some("completed") {
                         pending_tasks.insert(path);
