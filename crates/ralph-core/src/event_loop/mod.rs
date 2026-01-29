@@ -1288,7 +1288,7 @@ impl EventLoop {
             search_dirs.push(tasks_subdir);
         }
 
-        let mut task_files = Vec::new();
+        let mut pending_tasks = std::collections::BTreeSet::new();
         for dir in search_dirs {
             for entry in std::fs::read_dir(&dir)? {
                 let entry = entry?;
@@ -1301,27 +1301,19 @@ impl EventLoop {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"))
                 {
-                    task_files.push(path);
+                    let content = std::fs::read_to_string(&path)?;
+                    let status = extract_frontmatter_yaml(&content)
+                        .and_then(|yaml| serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml).ok())
+                        .and_then(|fm| fm.status);
+
+                    if status.as_deref() != Some("completed") {
+                        pending_tasks.insert(path);
+                    }
                 }
             }
         }
 
-        task_files.sort();
-        task_files.dedup();
-
-        let mut pending = Vec::new();
-        for task_path in task_files {
-            let content = std::fs::read_to_string(&task_path)?;
-            let status = extract_frontmatter_yaml(&content)
-                .and_then(|yaml| serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml).ok())
-                .and_then(|fm| fm.status);
-
-            if status.as_deref() != Some("completed") {
-                pending.push(task_path);
-            }
-        }
-
-        Ok(pending)
+        Ok(pending_tasks.into_iter().collect())
     }
 
     /// Returns a list of open task descriptions for logging purposes.
