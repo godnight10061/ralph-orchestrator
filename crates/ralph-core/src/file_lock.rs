@@ -129,10 +129,19 @@ impl FileLock {
             {
                 use std::time::Duration;
 
+                let mut sleep_duration = Duration::from_millis(10);
+                const MAX_SLEEP_DURATION: Duration = Duration::from_millis(250);
+
                 loop {
                     match self.try_acquire(lock_type)? {
                         Some(guard) => return Ok(guard),
-                        None => std::thread::sleep(Duration::from_millis(10)),
+                        None => {
+                            std::thread::sleep(sleep_duration);
+                            sleep_duration = sleep_duration
+                                .checked_mul(2)
+                                .unwrap_or(MAX_SLEEP_DURATION)
+                                .min(MAX_SLEEP_DURATION);
+                        }
                     }
                 }
             }
