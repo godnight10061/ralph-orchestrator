@@ -32,6 +32,8 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 /// A file lock for coordinating concurrent access to shared files.
@@ -99,12 +101,11 @@ impl FileLock {
 
     /// Acquires a lock of the specified type (blocking).
     fn acquire(&self, lock_type: LockType) -> io::Result<LockGuard> {
-        let file = self.open_lock_file()?;
-
         #[cfg(unix)]
         {
             use nix::fcntl::{Flock, FlockArg};
 
+            let file = self.open_lock_file(lock_type)?;
             let arg = match lock_type {
                 LockType::Shared => FlockArg::LockShared,
                 LockType::Exclusive => FlockArg::LockExclusive,
@@ -124,23 +125,37 @@ impl FileLock {
 
         #[cfg(not(unix))]
         {
-            let _ = (file, lock_type);
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "File locking not supported on this platform",
-            ))
+            #[cfg(windows)]
+            {
+                use std::time::Duration;
+
+                loop {
+                    match self.try_acquire(lock_type)? {
+                        Some(guard) => return Ok(guard),
+                        None => std::thread::sleep(Duration::from_millis(10)),
+                    }
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                let _ = lock_type;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "File locking not supported on this platform",
+                ))
+            }
         }
     }
 
     /// Tries to acquire a lock of the specified type (non-blocking).
     fn try_acquire(&self, lock_type: LockType) -> io::Result<Option<LockGuard>> {
-        let file = self.open_lock_file()?;
-
         #[cfg(unix)]
         {
             use nix::errno::Errno;
             use nix::fcntl::{Flock, FlockArg};
 
+            let file = self.open_lock_file(lock_type)?;
             let arg = match lock_type {
                 LockType::Shared => FlockArg::LockSharedNonblock,
                 LockType::Exclusive => FlockArg::LockExclusiveNonblock,
@@ -163,22 +178,38 @@ impl FileLock {
 
         #[cfg(not(unix))]
         {
-            let _ = (file, lock_type);
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "File locking not supported on this platform",
-            ))
+            #[cfg(windows)]
+            {
+                match self.open_lock_file(lock_type) {
+                    Ok(file) => Ok(Some(LockGuard {
+                        _file: file,
+                        _lock_type: lock_type,
+                    })),
+                    Err(err) if is_windows_lock_unavailable(&err) => Ok(None),
+                    Err(err) => Err(err),
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                let _ = lock_type;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "File locking not supported on this platform",
+                ))
+            }
         }
     }
 
     /// Opens or creates the lock file.
-    fn open_lock_file(&self) -> io::Result<File> {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.lock_path)
+    fn open_lock_file(&self, lock_type: LockType) -> io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+
+        #[cfg(windows)]
+        options.share_mode(windows_share_mode_for_lock(lock_type));
+
+        options.open(&self.lock_path)
     }
 
     /// Returns the path to the lock file.
@@ -203,8 +234,30 @@ pub struct LockGuard {
     #[cfg(unix)]
     _flock: nix::fcntl::Flock<File>,
 
+    /// The lock file handle (non-Unix).
+    #[cfg(not(unix))]
+    _file: File,
+
     /// The type of lock held.
     _lock_type: LockType,
+}
+
+#[cfg(windows)]
+fn windows_share_mode_for_lock(lock_type: LockType) -> u32 {
+    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea
+    const FILE_SHARE_READ: u32 = 0x00000001;
+    const FILE_SHARE_WRITE: u32 = 0x00000002;
+
+    match lock_type {
+        LockType::Shared => FILE_SHARE_READ | FILE_SHARE_WRITE,
+        LockType::Exclusive => 0,
+    }
+}
+
+#[cfg(windows)]
+fn is_windows_lock_unavailable(err: &io::Error) -> bool {
+    // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
+    matches!(err.raw_os_error(), Some(32) | Some(33))
 }
 
 /// A locked file that provides safe read/write access.

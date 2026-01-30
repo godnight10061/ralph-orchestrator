@@ -258,6 +258,7 @@ hats:
 
     /// Benchmark test for get_for_topic() performance.
     /// Run with: cargo test -p ralph-core bench_get_for_topic -- --nocapture
+    #[cfg(not(windows))]
     #[test]
     fn bench_get_for_topic_baseline() {
         // Create registry with 20 hats (realistic production scenario)

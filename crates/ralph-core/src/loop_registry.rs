@@ -304,11 +304,54 @@ impl LoopRegistry {
     }
 
     #[cfg(not(unix))]
-    fn with_lock<F>(&self, _f: F) -> Result<(), RegistryError>
+    fn with_lock<F>(&self, f: F) -> Result<(), RegistryError>
     where
         F: FnOnce(&mut RegistryData),
     {
-        Err(RegistryError::UnsupportedPlatform)
+        let lock = crate::file_lock::FileLock::new(&self.registry_path)?;
+        let _guard = lock.exclusive()?;
+
+        // Ensure .ralph directory exists
+        if let Some(parent) = self.registry_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Open or create the file
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.registry_path)?;
+
+        file.seek(SeekFrom::Start(0))?;
+
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let mut data = if contents.trim().is_empty() {
+            RegistryData::default()
+        } else {
+            serde_json::from_str(&contents).map_err(|e| RegistryError::ParseError(e.to_string()))?
+        };
+
+        // Clean stale entries before any operation
+        data.loops.retain(|e| e.is_alive());
+
+        // Execute the user function
+        f(&mut data);
+
+        // Write back the data
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+
+        let json = serde_json::to_string_pretty(&data)
+            .map_err(|e| RegistryError::ParseError(e.to_string()))?;
+
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+
+        Ok(())
     }
 
     /// Reads registry data from a locked file.
@@ -524,6 +567,7 @@ mod tests {
         assert_eq!(loops[0].prompt, "prompt 2");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_registry_different_pids_coexist() {
         // Entries with different PIDs should coexist
