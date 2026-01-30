@@ -40,18 +40,28 @@
 //! use std::path::PathBuf;
 //!
 //! // Primary loop runs in current directory
-//! let primary = LoopContext::primary(PathBuf::from("/project"));
-//! assert_eq!(primary.events_path().to_string_lossy(), "/project/.ralph/events.jsonl");
-//! assert_eq!(primary.tasks_path().to_string_lossy(), "/project/.ralph/agent/tasks.jsonl");
+//! let primary_root = PathBuf::from("/project");
+//! let primary = LoopContext::primary(primary_root.clone());
+//! assert_eq!(
+//!     primary.events_path(),
+//!     primary_root.join(".ralph").join("events.jsonl")
+//! );
+//! assert_eq!(
+//!     primary.tasks_path(),
+//!     primary_root.join(".ralph").join("agent").join("tasks.jsonl")
+//! );
 //!
 //! // Worktree loop runs in isolated directory
+//! let worktree_root = PathBuf::from("/project/.worktrees/loop-1234-abcd");
 //! let worktree = LoopContext::worktree(
 //!     "loop-1234-abcd",
-//!     PathBuf::from("/project/.worktrees/loop-1234-abcd"),
-//!     PathBuf::from("/project"),
+//!     worktree_root.clone(),
+//!     primary_root,
 //! );
-//! assert_eq!(worktree.events_path().to_string_lossy(),
-//!            "/project/.worktrees/loop-1234-abcd/.ralph/events.jsonl");
+//! assert_eq!(
+//!     worktree.events_path(),
+//!     worktree_root.join(".ralph").join("events.jsonl")
+//! );
 //! ```
 
 use std::path::{Path, PathBuf};

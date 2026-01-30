@@ -53,9 +53,9 @@ pub struct LockGuard {
     #[cfg(unix)]
     _flock: nix::fcntl::Flock<File>,
 
-    /// Placeholder for non-unix (compilation only, never actually used)
+    /// The cross-platform file lock guard (non-Unix).
     #[cfg(not(unix))]
-    _file: File,
+    _lock: crate::file_lock::LockGuard,
 
     /// Path to the lock file.
     lock_path: PathBuf,
@@ -172,9 +172,23 @@ impl LoopLock {
 
         #[cfg(not(unix))]
         {
-            let _ = file;
-            let _ = prompt;
-            Err(LockError::UnsupportedPlatform)
+            let lock = crate::file_lock::FileLock::new(&lock_path)?;
+            match lock.try_exclusive()? {
+                Some(guard) => {
+                    // We got the lock - write our metadata
+                    Self::write_metadata(&file, prompt)?;
+
+                    Ok(LockGuard {
+                        _lock: guard,
+                        lock_path,
+                    })
+                }
+                None => {
+                    // Lock is held by another process - read their metadata
+                    let metadata = Self::read_metadata(&file)?;
+                    Err(LockError::AlreadyLocked(metadata))
+                }
+            }
         }
     }
 
@@ -235,9 +249,16 @@ impl LoopLock {
 
         #[cfg(not(unix))]
         {
-            let _ = file;
-            let _ = prompt;
-            Err(LockError::UnsupportedPlatform)
+            let lock = crate::file_lock::FileLock::new(&lock_path)?;
+            let guard = lock.exclusive()?;
+
+            // We got the lock - write our metadata
+            Self::write_metadata(&file, prompt)?;
+
+            Ok(LockGuard {
+                _lock: guard,
+                lock_path,
+            })
         }
     }
 
@@ -302,7 +323,11 @@ impl LoopLock {
         #[cfg(not(unix))]
         {
             let _ = file;
-            Err(LockError::UnsupportedPlatform)
+            let lock = crate::file_lock::FileLock::new(&lock_path)?;
+            match lock.try_exclusive()? {
+                Some(_guard) => Ok(false),
+                None => Ok(true),
+            }
         }
     }
 

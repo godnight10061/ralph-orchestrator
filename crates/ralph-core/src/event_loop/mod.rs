@@ -18,7 +18,8 @@ use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
-use std::path::PathBuf;
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -124,6 +125,50 @@ pub struct EventLoop {
     loop_context: Option<LoopContext>,
     /// Skill registry for the current loop.
     skill_registry: SkillRegistry,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodeTaskFrontmatter {
+    status: Option<String>,
+}
+
+fn extract_frontmatter_yaml(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    let first = lines.next()?.trim();
+    if first != "---" {
+        return None;
+    }
+
+    let mut yaml_lines = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            return Some(yaml_lines.join("\n"));
+        }
+        yaml_lines.push(line);
+    }
+
+    None
+}
+
+fn is_code_task_file_pending(path: &Path) -> Result<bool, std::io::Error> {
+    let content = std::fs::read_to_string(path)?;
+    let status = if let Some(yaml) = extract_frontmatter_yaml(&content) {
+        match serde_yaml::from_str::<CodeTaskFrontmatter>(&yaml) {
+            Ok(fm) => fm.status,
+            Err(err) => {
+                warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "Failed to parse code task frontmatter, treating as pending"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(status.as_deref() != Some("completed"))
 }
 
 impl EventLoop {
@@ -1115,6 +1160,31 @@ impl EventLoop {
         if hat_id.as_str() == "ralph"
             && EventParser::contains_promise(output, &self.config.event_loop.completion_promise)
         {
+            // Backpressure for code-task workflows: do not allow LOOP_COMPLETE while scoped
+            // code task files remain pending.
+            let pending_tasks = match self.pending_code_task_files() {
+                Ok(tasks) => tasks,
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "Failed to verify code task completion - refusing completion"
+                    );
+                    return None;
+                }
+            };
+
+            if !pending_tasks.is_empty() {
+                let pending: Vec<_> = pending_tasks
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect();
+                warn!(
+                    pending_tasks = ?pending,
+                    "LOOP_COMPLETE with pending code task(s) - refusing completion"
+                );
+                return None;
+            }
+
             // Log warning if tasks remain open (informational only)
             if self.config.memories.enabled {
                 if let Ok(false) = self.verify_tasks_complete() {
@@ -1205,6 +1275,81 @@ impl EventLoop {
 
         let store = TaskStore::load(&tasks_path)?;
         Ok(!store.has_pending_tasks())
+    }
+
+    /// Returns the list of pending code task files in the current prompt directory scope.
+    ///
+    /// Scope is intentionally narrow to avoid "tasks/ pollution" across phases:
+    /// - Directory containing the active prompt file
+    /// - Optional `{prompt_dir}/tasks/` subdirectory
+    ///
+    /// If no code task files are found, returns an empty list.
+    fn pending_code_task_files(&self) -> Result<Vec<PathBuf>, std::io::Error> {
+        // Only enforce code-task backpressure when running from a prompt file (i.e., `ralph run -P ...`).
+        // If the user provided an inline prompt, the configured `prompt_file` may still be the default value
+        // and should not be used for filesystem-based completion gating.
+        if self.config.event_loop.prompt.is_some() {
+            return Ok(Vec::new());
+        }
+
+        let prompt_file = self.config.event_loop.prompt_file.trim();
+        if prompt_file.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let prompt_path = self.config.core.resolve_path(prompt_file);
+        let prompt_dir = prompt_path
+            .parent()
+            .unwrap_or(&self.config.core.workspace_root);
+
+        let mut search_dirs = vec![prompt_dir.to_path_buf()];
+        let tasks_subdir = prompt_dir.join("tasks");
+        if tasks_subdir.is_dir() {
+            search_dirs.push(tasks_subdir);
+        }
+
+        let mut pending_tasks = std::collections::BTreeSet::new();
+        for dir in search_dirs {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                let is_code_task_file = path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".code-task.md"));
+
+                if !is_code_task_file {
+                    continue;
+                }
+
+                let is_pending = match entry.file_type() {
+                    Ok(file_type) if file_type.is_file() || file_type.is_symlink() => {
+                        is_code_task_file_pending(&path).unwrap_or_else(|err| {
+                            warn!(
+                                path = %path.display(),
+                                error = %err,
+                                "Failed to check code task status, treating as pending"
+                            );
+                            true
+                        })
+                    }
+                    Ok(_) => false,
+                    Err(err) => {
+                        warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "Failed to read file type for code task, treating as pending"
+                        );
+                        true
+                    }
+                };
+                if is_pending {
+                    pending_tasks.insert(path);
+                }
+            }
+        }
+
+        Ok(pending_tasks.into_iter().collect())
     }
 
     /// Returns a list of open task descriptions for logging purposes.

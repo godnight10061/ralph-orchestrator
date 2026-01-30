@@ -505,11 +505,15 @@ impl MergeQueue {
     }
 
     #[cfg(not(unix))]
-    fn with_shared_lock<T, F>(&self, _f: F) -> Result<T, MergeQueueError>
+    fn with_shared_lock<T, F>(&self, f: F) -> Result<T, MergeQueueError>
     where
         F: FnOnce(&File) -> Result<T, MergeQueueError>,
     {
-        Err(MergeQueueError::UnsupportedPlatform)
+        let lock = crate::file_lock::FileLock::new(&self.queue_path)?;
+        let _guard = lock.shared()?;
+
+        let file = File::open(&self.queue_path)?;
+        f(&file)
     }
 
     /// Executes an operation with an exclusive (write) lock on the queue file.
@@ -551,11 +555,22 @@ impl MergeQueue {
     }
 
     #[cfg(not(unix))]
-    fn with_exclusive_lock<T, F>(&self, _f: F) -> Result<T, MergeQueueError>
+    fn with_exclusive_lock<T, F>(&self, f: F) -> Result<T, MergeQueueError>
     where
         F: FnOnce(File) -> Result<T, MergeQueueError>,
     {
-        Err(MergeQueueError::UnsupportedPlatform)
+        let lock = crate::file_lock::FileLock::new(&self.queue_path)?;
+        let _guard = lock.exclusive()?;
+
+        // Open or create the file
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.queue_path)?;
+
+        f(file)
     }
 }
 
