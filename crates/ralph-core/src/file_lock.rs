@@ -202,12 +202,12 @@ impl FileLock {
     }
 
     /// Opens or creates the lock file.
-    fn open_lock_file(&self, lock_type: LockType) -> io::Result<File> {
+    fn open_lock_file(&self, _lock_type: LockType) -> io::Result<File> {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
 
         #[cfg(windows)]
-        options.share_mode(windows_share_mode_for_lock(lock_type));
+        options.share_mode(windows_share_mode_for_lock(_lock_type));
 
         options.open(&self.lock_path)
     }
